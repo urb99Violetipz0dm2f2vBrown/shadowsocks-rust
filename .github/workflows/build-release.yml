@@ -11,40 +11,43 @@ env:
 jobs:
   build-windows:
     runs-on: windows-latest
-    env:
-      # 强制静态链接 CRT，避免 Win7 上缺少 VCRUNTIME140.dll
-      RUSTFLAGS: "-C target-feature=+crt-static"
-      RUST_BACKTRACE: full
-
     strategy:
       matrix:
         target:
           - x86_64-pc-windows-msvc
           - i686-pc-windows-msvc
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
+    env:
+      # 静态链接 CRT，确保 Win7 下无需额外 VS Redistributable
+      RUSTFLAGS: "-C target-feature=+crt-static"
+      RUST_BACKTRACE: full
 
-      - name: Install Rust toolchain and add targets
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      # 如果需要从 GitHub 仓库直接使用 traitobject 的修复分支：
+      - name: Apply traitobject patch (via patch.crates-io)
+        run: |
+          cat >> Cargo.toml << 'EOF'
+
+          [patch.crates-io]
+          traitobject = { git = "https://github.com/japaric/traitobject", rev = "REVISED_COMMIT_HASH" }
+          EOF
+
+      - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: nightly
           override: true
-          # 在同一行添加所有所需目标
           targets: x86_64-pc-windows-msvc, i686-pc-windows-msvc
 
-      - name: Ensure i686 target is added (fallback)
-        run: rustup target add i686-pc-windows-msvc || true
-
       - name: Update proc-macro2 dependency
-        # 有助于消除 proc_macro_span_shrink 错误
         run: cargo update -p proc-macro2
 
-      - name: Build release for ${{ matrix.target }}
-        run: |
-          cargo build --release --target ${{ matrix.target }}
+      - name: Build for ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Upload artifacts
         uses: softprops/action-gh-release@v1
