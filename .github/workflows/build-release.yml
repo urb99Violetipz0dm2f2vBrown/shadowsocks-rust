@@ -2,7 +2,7 @@ name: Build Releases
 
 on:
   push:
-    tags:
+    paths:
       - '.github/workflows/build-release.yml'
 
 env:
