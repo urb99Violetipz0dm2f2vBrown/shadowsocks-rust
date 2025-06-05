@@ -1,184 +1,55 @@
-name: Build Releases 
+name: Build Releases
+
 on:
   push:
-    paths:
+    tags:
       - '.github/workflows/build-release.yml'
-
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ### 1. 跨平台交叉编译作业（已保留，无需改动） ###
-  build-cross:
-    runs-on: ubuntu-latest
-    env:
-      RUST_BACKTRACE: full
-    strategy:
-      matrix:
-        target:
-          - i686-unknown-linux-musl
-          - x86_64-pc-windows-gnu
-          - x86_64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
-          - armv7-unknown-linux-musleabihf
-          - armv7-unknown-linux-gnueabihf
-          - arm-unknown-linux-gnueabi
-          - arm-unknown-linux-gnueabihf
-          - arm-unknown-linux-musleabi
-          - arm-unknown-linux-musleabihf
-          - aarch64-unknown-linux-gnu
-          - aarch64-unknown-linux-musl
-          - mips-unknown-linux-musl
-          - mips-unknown-linux-gnu
-          - mipsel-unknown-linux-musl
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          target: ${{ matrix.target }}
-          toolchain: nightly
-          default: true
-          override: true
-
-      - name: Install cross
-        run: cargo install cross
-
-      - name: Build ${{ matrix.target }}
-        timeout-minutes: 120
-        run: |
-          compile_target=${{ matrix.target }}
-
-          if [[ "$compile_target" == *"-linux-"* || "$compile_target" == *"-apple-"* ]]; then
-            compile_features="-f local-redir -f local-tun"
-          fi
-
-          if [[ "$compile_target" == "mips-"* || "$compile_target" == "mipsel-"* || "$compile_target" == "mips64-"* || "$compile_target" == "mips64el-"* ]]; then
-            sudo apt-get update -y && sudo apt-get install -y upx;
-            if [[ "$?" == "0" ]]; then
-              compile_compress="-u"
-            fi
-          fi
-
-          if [[ "$compile_target" == "aarch64-"* ]]; then
-            compile_features="$compile_features -f armv8 -f neon"
-          fi
-
-          cd build
-          ./build-release -t ${{ matrix.target }} $compile_features $compile_compress
-
-      - name: Upload Github Assets
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          files: build/release/*
-          prerelease: ${{ contains(github.ref, '-') }}
-
-  ### 2. Unix/Mac 原生编译作业，无需修改 ###
-
-  build-unix:
-    runs-on: ${{ matrix.os }}
-    env:
-      BUILD_EXTRA_FEATURES: "local-redir local-tun armv8 neon"
-      RUST_BACKTRACE: full
-    strategy:
-      matrix:
-        os: [macos-latest]
-        target:
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: Install GNU tar
-        if: runner.os == 'macOS'
-        run: |
-          brew install gnu-tar
-          echo "/usr/local/opt/gnu-tar/libexec/gnubin" >> $GITHUB_PATH
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          target: ${{ matrix.target }}
-          toolchain: nightly
-          default: true
-          override: true
-
-      - if: ${{ matrix.target }} == 'aarch64-apple-darwin'
-        run: |
-          sudo xcode-select -s /Applications/Xcode_12.4.app &&
-          sudo rm -Rf /Library/Developer/CommandLineTools/SDKs/*
-
-      - name: Build release
-        shell: bash
-        run: |
-          ./build/build-host-release -t ${{ matrix.target }}
-
-      - name: Upload Github Assets
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          files: build/release/*
-          prerelease: ${{ contains(github.ref, '-') }}
-
-  ### 3. 修改后的 Windows 构建作业，新增对 i686 (Win7 32 位) 的支持 ###
   build-windows:
     runs-on: windows-latest
     env:
-      # 强制静态链接 CRT，以避免 Win7 上缺少 VCRUNTIME140.dll
+      # 强制静态链接 CRT，避免 Win7 上缺少 VCRUNTIME140.dll
       RUSTFLAGS: "-C target-feature=+crt-static"
       RUST_BACKTRACE: full
+
     strategy:
       matrix:
-        # 同时构建 64 位和 32 位 两个目标
         target:
           - x86_64-pc-windows-msvc
           - i686-pc-windows-msvc
+
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout repository
+        uses: actions/checkout@v2
 
       - name: Install Rust toolchain and add targets
-        # 安装 Nightly 工具链并添加两个目标：x86_64 和 i686
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: nightly
           override: true
-          # “targets” 输入字段有时不生效时，可改为在下面单独添加
-          targets: i686-pc-windows-msvc, x86_64-pc-windows-msvc
+          # 在同一行添加所有所需目标
+          targets: x86_64-pc-windows-msvc, i686-pc-windows-msvc
 
-      - name: Ensure i686 target is added
-        run: |
-          rustup target add i686-pc-windows-msvc
+      - name: Ensure i686 target is added (fallback)
+        run: rustup target add i686-pc-windows-msvc || true
+
+      - name: Update proc-macro2 dependency
+        # 有助于消除 proc_macro_span_shrink 错误
+        run: cargo update -p proc-macro2
 
       - name: Build release for ${{ matrix.target }}
         run: |
-          # 确保在项目根目录下执行构建命令
-          cd build
-          # 指定 --target 构建对应架构的 Release 二进制
           cargo build --release --target ${{ matrix.target }}
 
-      - name: Collect built binaries
-        run: |
-          # 创建 artifacts 目录并拷贝对应架构产物
-          mkdir -Force artifacts
-          if ($Env:matrix_target -eq "x86_64-pc-windows-msvc") {
-            Copy-Item .\build\target\x86_64-pc-windows-msvc\release\* artifacts\
-          } else {
-            Copy-Item .\build\target\i686-pc-windows-msvc\release\* artifacts\
-          }
-
-      - name: Upload Github Assets
+      - name: Upload artifacts
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: artifacts/*
+          files: target/${{ matrix.target }}/release/*
           prerelease: ${{ contains(github.ref, '-') }}
