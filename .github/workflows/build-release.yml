@@ -1,8 +1,9 @@
 name: Build Releases 
 on:
   push:
-    tags:
-      - v*
+    paths:
+      - '.github/workflows/build-release.yml'
+
 
 env:
   CARGO_TERM_COLOR: always
