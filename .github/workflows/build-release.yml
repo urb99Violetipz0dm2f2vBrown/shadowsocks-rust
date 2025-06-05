@@ -26,14 +26,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      # 如果需要从 GitHub 仓库直接使用 traitobject 的修复分支：
-      - name: Apply traitobject patch (via patch.crates-io)
-        run: |
-          cat >> Cargo.toml << 'EOF'
-
-          [patch.crates-io]
-          traitobject = { git = "https://github.com/japaric/traitobject", rev = "REVISED_COMMIT_HASH" }
-          EOF
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
