@@ -1,4 +1,4 @@
-name: Build Releases
+name: Build Releases 
 on:
   push:
     tags:
@@ -8,6 +8,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  ### 1. 跨平台交叉编译作业（已保留，无需改动） ###
   build-cross:
     runs-on: ubuntu-latest
     env:
@@ -77,6 +78,8 @@ jobs:
           files: build/release/*
           prerelease: ${{ contains(github.ref, '-') }}
 
+  ### 2. Unix/Mac 原生编译作业，无需修改 ###
+
   build-unix:
     runs-on: ${{ matrix.os }}
     env:
@@ -84,7 +87,6 @@ jobs:
       RUST_BACKTRACE: full
     strategy:
       matrix:
-        # os: [ubuntu-latest, macos-latest]
         os: [macos-latest]
         target:
           - x86_64-apple-darwin
@@ -96,7 +98,6 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install gnu-tar
-          # echo "::add-path::/usr/local/opt/gnu-tar/libexec/gnubin"
           echo "/usr/local/opt/gnu-tar/libexec/gnubin" >> $GITHUB_PATH
 
       - name: Install Rust
@@ -108,7 +109,6 @@ jobs:
           default: true
           override: true
 
-      # https://github.com/actions/virtual-environments/issues/2557#issuecomment-769611326
       - if: ${{ matrix.target }} == 'aarch64-apple-darwin'
         run: |
           sudo xcode-select -s /Applications/Xcode_12.4.app &&
@@ -127,30 +127,57 @@ jobs:
           files: build/release/*
           prerelease: ${{ contains(github.ref, '-') }}
 
+  ### 3. 修改后的 Windows 构建作业，新增对 i686 (Win7 32 位) 的支持 ###
   build-windows:
     runs-on: windows-latest
     env:
+      # 强制静态链接 CRT，以避免 Win7 上缺少 VCRUNTIME140.dll
       RUSTFLAGS: "-C target-feature=+crt-static"
       RUST_BACKTRACE: full
+    strategy:
+      matrix:
+        # 同时构建 64 位和 32 位 两个目标
+        target:
+          - x86_64-pc-windows-msvc
+          - i686-pc-windows-msvc
     steps:
       - uses: actions/checkout@v2
 
-      - name: Install Rust
+      - name: Install Rust toolchain and add targets
+        # 安装 Nightly 工具链并添加两个目标：x86_64 和 i686
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: nightly
-          default: true
           override: true
+          # “targets” 输入字段有时不生效时，可改为在下面单独添加
+          targets: i686-pc-windows-msvc, x86_64-pc-windows-msvc
 
-      - name: Build release
+      - name: Ensure i686 target is added
         run: |
-          pwsh ./build/build-host-release.ps1
+          rustup target add i686-pc-windows-msvc
+
+      - name: Build release for ${{ matrix.target }}
+        run: |
+          # 确保在项目根目录下执行构建命令
+          cd build
+          # 指定 --target 构建对应架构的 Release 二进制
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Collect built binaries
+        run: |
+          # 创建 artifacts 目录并拷贝对应架构产物
+          mkdir -Force artifacts
+          if ($Env:matrix_target -eq "x86_64-pc-windows-msvc") {
+            Copy-Item .\build\target\x86_64-pc-windows-msvc\release\* artifacts\
+          } else {
+            Copy-Item .\build\target\i686-pc-windows-msvc\release\* artifacts\
+          }
 
       - name: Upload Github Assets
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: build/release/*
+          files: artifacts/*
           prerelease: ${{ contains(github.ref, '-') }}
